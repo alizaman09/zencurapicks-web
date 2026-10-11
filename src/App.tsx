@@ -1022,13 +1022,13 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {products.map(product => (
                       <div key={product.id} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col">
-                        <div className={`relative ${product.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} bg-slate-100`}>
+                        <div className={`relative ${product.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} bg-slate-50 flex items-center justify-center p-3 sm:p-4 overflow-hidden border-b border-slate-100`}>
                           <img 
                             src={product.images[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80'} 
                             alt={product.name}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-contain"
                           />
-                          <span className="absolute top-3 right-3 px-2.5 py-1 bg-black/60 backdrop-blur-md text-white text-xs rounded-full font-medium">
+                          <span className="absolute top-3 right-3 px-2.5 py-1 bg-black/60 backdrop-blur-md text-white text-xs rounded-full font-medium shadow-sm">
                             {product.images.length} {product.images.length === 1 ? 'image' : 'images'}
                           </span>
                         </div>
@@ -1253,10 +1253,10 @@ export default function App() {
                         </p>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                           {formImages.map((imgUrl, idx) => (
-                            <div key={idx} className="relative group rounded-xl border border-slate-200 overflow-hidden bg-slate-100 aspect-[4/3]">
-                              <img src={imgUrl} alt={`Preview ${idx}`} className="w-full h-full object-cover" />
+                            <div key={idx} className="relative group rounded-xl border border-slate-200 overflow-hidden bg-slate-50 p-2 flex items-center justify-center aspect-[4/3]">
+                              <img src={imgUrl} alt={`Preview ${idx}`} className="w-full h-full object-contain" />
                               {idx === 0 && (
-                                <span className="absolute top-2 left-2 px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded">
+                                <span className="absolute top-2 left-2 px-2 py-0.5 bg-blue-600 text-white text-[10px] font-bold rounded shadow-sm">
                                   Main
                                 </span>
                               )}
@@ -1559,14 +1559,14 @@ export default function App() {
                       className="group bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-600/30 transition-all duration-300 overflow-hidden flex flex-col cursor-pointer"
                     >
                       {/* Product Image */}
-                      <div className={`relative ${product.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} bg-slate-100 overflow-hidden`}>
+                      <div className={`relative ${product.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} bg-slate-50 flex items-center justify-center p-3 sm:p-4 overflow-hidden border-b border-slate-100`}>
                         <img 
                           src={product.images[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80'} 
                           alt={product.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500"
                         />
                         {product.images.length > 1 && (
-                          <div className="absolute bottom-3 right-3 px-2.5 py-1 bg-black/60 backdrop-blur-md text-white text-[11px] font-medium rounded-full flex items-center gap-1">
+                          <div className="absolute bottom-3 right-3 px-2.5 py-1 bg-black/60 backdrop-blur-md text-white text-[11px] font-medium rounded-full flex items-center gap-1 shadow-sm">
                             <Layers className="w-3 h-3" />
                             {product.images.length} photos
                           </div>
@@ -1659,11 +1659,11 @@ export default function App() {
             <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
               {/* Image Gallery */}
               <div className="space-y-4">
-                <div className={`${selectedProduct.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} rounded-2xl bg-slate-100 overflow-hidden border border-slate-200`}>
+                <div className={`${selectedProduct.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} rounded-2xl bg-slate-50 flex items-center justify-center p-4 sm:p-6 overflow-hidden border border-slate-200`}>
                   <img 
                     src={selectedProduct.images[activeImageIndex] || selectedProduct.images[0]} 
                     alt={selectedProduct.name}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain"
                   />
                 </div>
                 {selectedProduct.images.length > 1 && (
@@ -1672,11 +1672,11 @@ export default function App() {
                       <button
                         key={idx}
                         onClick={() => setActiveImageIndex(idx)}
-                        className={`w-20 h-20 rounded-xl overflow-hidden shrink-0 border-2 transition-all ${
-                          activeImageIndex === idx ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-transparent opacity-70 hover:opacity-100'
+                        className={`w-20 h-20 rounded-xl overflow-hidden shrink-0 border-2 transition-all bg-slate-50 p-1 flex items-center justify-center ${
+                          activeImageIndex === idx ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-slate-200 opacity-70 hover:opacity-100'
                         }`}
                       >
-                        <img src={img} alt={`Thumb ${idx}`} className="w-full h-full object-cover" />
+                        <img src={img} alt={`Thumb ${idx}`} className="w-full h-full object-contain" />
                       </button>
                     ))}
                   </div>
