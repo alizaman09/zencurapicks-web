@@ -33,6 +33,7 @@ interface Product {
   description: string;
   images: string[];
   affiliateUrl: string;
+  orientation?: 'horizontal' | 'vertical';
   createdAt: string;
 }
 
@@ -92,7 +93,10 @@ export default function App() {
     setProducts(newProducts);
     try {
       localStorage.setItem('zencura_products', JSON.stringify(newProducts));
-    } catch (e) {}
+    } catch (e: any) {
+      console.error('Failed to save products to localStorage:', e);
+      showToast('Warning: LocalStorage quota exceeded or restricted. Products updated in memory.');
+    }
   };
 
   const [branding, setBranding] = useState<Branding>(() => {
@@ -115,8 +119,8 @@ export default function App() {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
   // Admin states
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
-  const [adminToken, setAdminToken] = useState<string | null>(localStorage.getItem('zencura_admin_token'));
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => !!localStorage.getItem('zencura_admin_token'));
+  const [adminToken, setAdminToken] = useState<string | null>(() => localStorage.getItem('zencura_admin_token'));
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -133,12 +137,82 @@ export default function App() {
   // Admin Dashboard views & state
   const [activeAdminTab, setActiveAdminTab] = useState<'products' | 'add' | 'branding' | 'password'>('products');
   
-  // Product Form State (for Add / Edit)
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [formName, setFormName] = useState('');
-  const [formDescription, setFormDescription] = useState('');
-  const [formImages, setFormImages] = useState<string[]>([]);
-  const [formAffiliateUrl, setFormAffiliateUrl] = useState('');
+  // Product Form State (for Add / Edit) with localStorage draft persistence
+  const [editingProductId, setEditingProductId] = useState<string | null>(() => {
+    try {
+      const saved = localStorage.getItem('zencura_product_form_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.editingProductId !== undefined ? parsed.editingProductId : null;
+      }
+    } catch (e) {}
+    return null;
+  });
+  const [formName, setFormName] = useState(() => {
+    try {
+      const saved = localStorage.getItem('zencura_product_form_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.formName || '';
+      }
+    } catch (e) {}
+    return '';
+  });
+  const [formDescription, setFormDescription] = useState(() => {
+    try {
+      const saved = localStorage.getItem('zencura_product_form_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.formDescription || '';
+      }
+    } catch (e) {}
+    return '';
+  });
+  const [formImages, setFormImages] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('zencura_product_form_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed.formImages) ? parsed.formImages : [];
+      }
+    } catch (e) {}
+    return [];
+  });
+  const [formAffiliateUrl, setFormAffiliateUrl] = useState(() => {
+    try {
+      const saved = localStorage.getItem('zencura_product_form_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.formAffiliateUrl || '';
+      }
+    } catch (e) {}
+    return '';
+  });
+  const [formOrientation, setFormOrientation] = useState<'horizontal' | 'vertical'>(() => {
+    try {
+      const saved = localStorage.getItem('zencura_product_form_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.formOrientation || 'horizontal';
+      }
+    } catch (e) {}
+    return 'horizontal';
+  });
+
+  // Auto-save form draft to localStorage
+  useEffect(() => {
+    if (formName || formDescription || formImages.length > 0 || formAffiliateUrl || editingProductId) {
+      const draft = {
+        editingProductId,
+        formName,
+        formDescription,
+        formImages,
+        formAffiliateUrl,
+        formOrientation
+      };
+      localStorage.setItem('zencura_product_form_draft', JSON.stringify(draft));
+    }
+  }, [editingProductId, formName, formDescription, formImages, formAffiliateUrl, formOrientation]);
   const [imageInputType, setImageInputType] = useState<'url' | 'file'>('file');
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -194,8 +268,8 @@ export default function App() {
     if (!img) return;
 
     const canvas = document.createElement('canvas');
-    const targetWidth = 1000;
-    const targetHeight = 750; // 4:3 aspect ratio
+    const targetWidth = 800;
+    const targetHeight = 600; // 4:3 aspect ratio
     canvas.width = targetWidth;
     canvas.height = targetHeight;
     const ctx = canvas.getContext('2d');
@@ -212,7 +286,7 @@ export default function App() {
 
     ctx.drawImage(img, x, y, w, h);
 
-    const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+    const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.80);
     setFormImages(prev => [...prev, croppedDataUrl]);
     setCropImageSrc(null);
   };
@@ -351,16 +425,16 @@ export default function App() {
     fetchData();
   }, []);
 
-  // Check admin session if token exists
+  // Check admin session from localStorage
   useEffect(() => {
-    if (adminToken) {
-      if (adminToken.startsWith('mock-admin-token-') || localStorage.getItem('zencura_admin_token')) {
-        setIsAdminLoggedIn(true);
-      } else {
-        setIsAdminLoggedIn(false);
-      }
+    const token = localStorage.getItem('zencura_admin_token');
+    if (token) {
+      setAdminToken(token);
+      setIsAdminLoggedIn(true);
+    } else {
+      setIsAdminLoggedIn(false);
     }
-  }, [adminToken]);
+  }, []);
 
   const fetchData = () => {
     try {
@@ -405,6 +479,7 @@ export default function App() {
         setShowLoginModal(false);
         setLoginPassword('');
         setLoginEmail('');
+        showToast('Successfully logged into Admin Dashboard');
       } else {
         throw new Error('Invalid email or password');
       }
@@ -419,6 +494,7 @@ export default function App() {
     localStorage.removeItem('zencura_admin_token');
     setAdminToken(null);
     setIsAdminLoggedIn(false);
+    showToast('Logged out successfully');
   };
 
   const handleAddImageUrl = () => {
@@ -458,7 +534,8 @@ export default function App() {
           name: formName,
           description: formDescription,
           images: formImages,
-          affiliateUrl: formAffiliateUrl
+          affiliateUrl: formAffiliateUrl,
+          orientation: formOrientation
         } : p);
         saveProductsToStorage(updated);
         setFormSuccess('Product updated successfully!');
@@ -469,11 +546,15 @@ export default function App() {
           description: formDescription,
           images: formImages,
           affiliateUrl: formAffiliateUrl,
+          orientation: formOrientation,
           createdAt: new Date().toISOString()
         };
         saveProductsToStorage([newProd, ...products]);
         setFormSuccess('Product published successfully!');
       }
+
+      // Clear draft upon successful save
+      localStorage.removeItem('zencura_product_form_draft');
 
       // Completely reset form and image states so preview is clear for next upload
       setEditingProductId(null);
@@ -481,6 +562,7 @@ export default function App() {
       setFormDescription('');
       setFormImages([]);
       setFormAffiliateUrl('');
+      setFormOrientation('horizontal');
       setImageUrlInput('');
       setCropImageSrc(null);
       setFormError('');
@@ -494,11 +576,13 @@ export default function App() {
   };
 
   const startEditProduct = (prod: Product) => {
+    localStorage.removeItem('zencura_product_form_draft');
     setEditingProductId(prod.id);
     setFormName(prod.name);
     setFormDescription(prod.description);
     setFormImages([...prod.images]);
     setFormAffiliateUrl(prod.affiliateUrl);
+    setFormOrientation(prod.orientation || 'horizontal');
     setImageUrlInput('');
     setCropImageSrc(null);
     setFormError('');
@@ -507,11 +591,13 @@ export default function App() {
   };
 
   const startNewProduct = () => {
+    localStorage.removeItem('zencura_product_form_draft');
     setEditingProductId(null);
     setFormName('');
     setFormDescription('');
     setFormImages([]);
     setFormAffiliateUrl('');
+    setFormOrientation('horizontal');
     setImageUrlInput('');
     setCropImageSrc(null);
     setFormError('');
@@ -519,6 +605,23 @@ export default function App() {
     const fileInput = document.getElementById('product-file-upload') as HTMLInputElement;
     if (fileInput) fileInput.value = '';
     setActiveAdminTab('add');
+  };
+
+  const handleDiscardDraft = () => {
+    localStorage.removeItem('zencura_product_form_draft');
+    setEditingProductId(null);
+    setFormName('');
+    setFormDescription('');
+    setFormImages([]);
+    setFormAffiliateUrl('');
+    setFormOrientation('horizontal');
+    setImageUrlInput('');
+    setCropImageSrc(null);
+    setFormError('');
+    setFormSuccess('');
+    const fileInput = document.getElementById('product-file-upload') as HTMLInputElement;
+    if (fileInput) fileInput.value = '';
+    showToast('Form draft discarded.');
   };
 
   const handleDeleteProduct = () => {
@@ -740,7 +843,7 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {products.map(product => (
                       <div key={product.id} className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden flex flex-col">
-                        <div className="relative h-48 bg-slate-100">
+                        <div className={`relative ${product.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} bg-slate-100`}>
                           <img 
                             src={product.images[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80'} 
                             alt={product.name}
@@ -868,6 +971,40 @@ export default function App() {
                     <p className="text-xs text-slate-400 mt-1">This destination URL is never shown as raw text on public cards; it powers the More Details button.</p>
                   </div>
 
+                  {/* Image Frame Orientation */}
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-800 mb-2">
+                      Image Frame Orientation <span className="text-red-500">*</span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setFormOrientation('horizontal')}
+                        className={`px-4 py-3 rounded-xl border text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                          formOrientation === 'horizontal'
+                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm'
+                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="w-5 h-3.5 border-2 border-current rounded-sm"></div>
+                        Horizontal (4:3)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormOrientation('vertical')}
+                        className={`px-4 py-3 rounded-xl border text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                          formOrientation === 'vertical'
+                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm'
+                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        <div className="w-3.5 h-5 border-2 border-current rounded-sm"></div>
+                        Vertical (3:4)
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">Choose Horizontal for landscape shots or Vertical for portrait/tall photos.</p>
+                  </div>
+
                   {/* Image Management Section */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
@@ -971,24 +1108,34 @@ export default function App() {
                     )}
                   </div>
 
-                  <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                  <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
                     <button
                       type="button"
-                      onClick={() => {
-                        startNewProduct();
-                        setActiveAdminTab('products');
-                      }}
-                      className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      onClick={handleDiscardDraft}
+                      className="text-xs text-red-600 hover:text-red-700 font-medium flex items-center gap-1"
                     >
-                      Cancel
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Discard Draft
                     </button>
-                    <button
-                      type="submit"
-                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-blue-600/20 transition-all flex items-center gap-2"
-                    >
-                      <Check className="w-4 h-4" />
-                      {editingProductId ? 'Save Changes' : 'Publish Product'}
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          startNewProduct();
+                          setActiveAdminTab('products');
+                        }}
+                        className="px-5 py-2.5 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-blue-600/20 transition-all flex items-center gap-2"
+                      >
+                        <Check className="w-4 h-4" />
+                        {editingProductId ? 'Save Changes' : 'Publish Product'}
+                      </button>
+                    </div>
                   </div>
                 </form>
               </div>
@@ -1233,7 +1380,7 @@ export default function App() {
                       className="group bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-xl hover:border-blue-600/30 transition-all duration-300 overflow-hidden flex flex-col cursor-pointer"
                     >
                       {/* Product Image */}
-                      <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden">
+                      <div className={`relative ${product.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} bg-slate-100 overflow-hidden`}>
                         <img 
                           src={product.images[0] || 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=800&q=80'} 
                           alt={product.name}
@@ -1333,7 +1480,7 @@ export default function App() {
             <div className="p-6 sm:p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
               {/* Image Gallery */}
               <div className="space-y-4">
-                <div className="aspect-[4/3] rounded-2xl bg-slate-100 overflow-hidden border border-slate-200">
+                <div className={`${selectedProduct.orientation === 'vertical' ? 'aspect-[3/4]' : 'aspect-[4/3]'} rounded-2xl bg-slate-100 overflow-hidden border border-slate-200`}>
                   <img 
                     src={selectedProduct.images[activeImageIndex] || selectedProduct.images[0]} 
                     alt={selectedProduct.name}
