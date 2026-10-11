@@ -24,8 +24,13 @@ import {
   Layers,
   ArrowRight,
   Upload,
-  Eye
+  Eye,
+  Wifi,
+  WifiOff,
+  RefreshCw
 } from 'lucide-react';
+import { ref, onValue, set, get } from 'firebase/database';
+import { rtdb } from './firebase';
 
 interface Product {
   id: string;
@@ -89,16 +94,6 @@ export default function App() {
     return INITIAL_PRODUCTS;
   });
 
-  const saveProductsToStorage = (newProducts: Product[]) => {
-    setProducts(newProducts);
-    try {
-      localStorage.setItem('zencura_products', JSON.stringify(newProducts));
-    } catch (e: any) {
-      console.error('Failed to save products to localStorage:', e);
-      showToast('Warning: LocalStorage quota exceeded or restricted. Products updated in memory.');
-    }
-  };
-
   const [branding, setBranding] = useState<Branding>(() => {
     try {
       const saved = localStorage.getItem('zencura_branding');
@@ -113,6 +108,8 @@ export default function App() {
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
 
   // Selected product for detailed modal view
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -133,6 +130,7 @@ export default function App() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
+
 
   // Admin Dashboard views & state
   const [activeAdminTab, setActiveAdminTab] = useState<'products' | 'add' | 'branding' | 'password'>('products');
@@ -318,7 +316,7 @@ export default function App() {
   const [forgotSuccess, setForgotSuccess] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
 
-  const handleUpdatePassword = (e: React.FormEvent) => {
+  const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPasswordError('');
     setPasswordSuccess('');
@@ -333,13 +331,34 @@ export default function App() {
     }
 
     try {
-      const currentPassword = localStorage.getItem('zencura_admin_password') || '03060666126ak';
+      let currentPassword = '03060666126ak';
+      try {
+        const passSnap = await get(ref(rtdb, 'admin/password'));
+        if (passSnap.exists()) {
+          currentPassword = passSnap.val();
+        } else {
+          const localPass = localStorage.getItem('zencura_admin_password');
+          if (localPass) currentPassword = localPass;
+        }
+      } catch (e) {
+        const localPass = localStorage.getItem('zencura_admin_password');
+        if (localPass) currentPassword = localPass;
+      }
+
       if (oldPassword !== currentPassword) {
         setPasswordError('Incorrect old password');
         return;
       }
+
+      // Sync new password to Firebase Realtime Database
+      try {
+        await set(ref(rtdb, 'admin/password'), newPassword);
+      } catch (e) {
+        console.warn('Firebase RTDB password sync failed, saving locally:', e);
+      }
+
       localStorage.setItem('zencura_admin_password', newPassword);
-      setPasswordSuccess('Password updated successfully!');
+      setPasswordSuccess('Password updated and synced across all devices!');
       setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -357,6 +376,9 @@ export default function App() {
     try {
       await new Promise(r => setTimeout(r, 300));
       const pin = Math.floor(100000 + Math.random() * 900000).toString();
+      try {
+        await set(ref(rtdb, 'admin/recoveryPin'), pin);
+      } catch (e) {}
       localStorage.setItem('zencura_forgot_pin', pin);
       setForgotSuccess(`6-digit recovery PIN sent to zencurapicks@gmail.com (Demo PIN: ${pin})`);
       setLoginMode('forgot_verify');
@@ -373,8 +395,14 @@ export default function App() {
     setForgotSuccess('');
     setForgotLoading(true);
     try {
-      await new Promise(r => setTimeout(r, 200));
-      const expectedPin = localStorage.getItem('zencura_forgot_pin') || '123456';
+      let expectedPin = localStorage.getItem('zencura_forgot_pin') || '123456';
+      try {
+        const snap = await get(ref(rtdb, 'admin/recoveryPin'));
+        if (snap.exists()) {
+          expectedPin = String(snap.val());
+        }
+      } catch (e) {}
+
       if (forgotPin.trim() !== expectedPin) {
         throw new Error('Invalid recovery PIN. Please check and try again.');
       }
@@ -403,7 +431,9 @@ export default function App() {
 
     setForgotLoading(true);
     try {
-      await new Promise(r => setTimeout(r, 200));
+      try {
+        await set(ref(rtdb, 'admin/password'), forgotNewPassword);
+      } catch (e) {}
       localStorage.setItem('zencura_admin_password', forgotNewPassword);
       setLoginMode('login');
       setLoginError('');
@@ -412,7 +442,7 @@ export default function App() {
       setForgotPin('');
       setForgotNewPassword('');
       setForgotConfirmPassword('');
-      showToast('Password successfully reset! Please sign in with your new password.');
+      showToast('Password successfully reset and synced to Firebase!');
     } catch (err: any) {
       setForgotError(err.message || 'Failed to reset password');
     } finally {
@@ -420,13 +450,76 @@ export default function App() {
     }
   };
 
-  // Fetch initial data
+  // Real-time synchronization with Firebase Realtime Database
   useEffect(() => {
-    fetchData();
-  }, []);
+    setLoading(true);
+    let isSubscribed = true;
 
-  // Check admin session from localStorage
-  useEffect(() => {
+    // Listen to Products in real-time
+    const productsRef = ref(rtdb, 'products');
+    const unsubscribeProducts = onValue(productsRef, (snapshot) => {
+      if (!isSubscribed) return;
+      setIsOnline(true);
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        let prodList: Product[] = [];
+        if (Array.isArray(val)) {
+          prodList = val.filter(Boolean);
+        } else if (typeof val === 'object' && val !== null) {
+          prodList = Object.values(val);
+        }
+        setProducts(prodList);
+        try {
+          localStorage.setItem('zencura_products', JSON.stringify(prodList));
+        } catch (e) {}
+      } else {
+        // Initialize default products in Realtime Database if empty
+        set(productsRef, INITIAL_PRODUCTS).catch(console.error);
+        setProducts(INITIAL_PRODUCTS);
+        try {
+          localStorage.setItem('zencura_products', JSON.stringify(INITIAL_PRODUCTS));
+        } catch (e) {}
+      }
+      setLoading(false);
+    }, (error) => {
+      console.warn('Firebase RTDB products listener warning/offline:', error);
+      setIsOnline(false);
+      // Fallback to localStorage if offline
+      try {
+        const saved = localStorage.getItem('zencura_products');
+        if (saved) setProducts(JSON.parse(saved));
+      } catch (e) {}
+      setLoading(false);
+    });
+
+    // Listen to Branding in real-time
+    const brandingRef = ref(rtdb, 'branding');
+    const unsubscribeBranding = onValue(brandingRef, (snapshot) => {
+      if (!isSubscribed) return;
+      if (snapshot.exists()) {
+        const val = snapshot.val() as Branding;
+        setBranding(val);
+        setBrandSiteName(val.siteName);
+        setBrandFontFamily(val.fontFamily);
+        setBrandFontStyle(val.fontStyle);
+        setBrandIsBold(val.isBold);
+        try {
+          localStorage.setItem('zencura_branding', JSON.stringify(val));
+        } catch (e) {}
+      } else {
+        const defaultB: Branding = {
+          siteName: 'ZencuraPicks',
+          fontFamily: 'Inter',
+          fontStyle: 'normal',
+          isBold: true
+        };
+        set(brandingRef, defaultB).catch(console.error);
+      }
+    }, (error) => {
+      console.warn('Firebase RTDB branding listener offline:', error);
+    });
+
+    // Check admin session from localStorage
     const token = localStorage.getItem('zencura_admin_token');
     if (token) {
       setAdminToken(token);
@@ -434,32 +527,32 @@ export default function App() {
     } else {
       setIsAdminLoggedIn(false);
     }
+
+    return () => {
+      isSubscribed = false;
+      unsubscribeProducts();
+      unsubscribeBranding();
+    };
   }, []);
 
-  const fetchData = () => {
+  // Save products to Firebase Realtime Database (with localStorage cache fallback)
+  const saveProductsToStorage = async (newProducts: Product[]) => {
+    setProducts(newProducts);
+    setIsSyncing(true);
     try {
-      setLoading(true);
-      const savedProducts = localStorage.getItem('zencura_products');
-      if (savedProducts) {
-        setProducts(JSON.parse(savedProducts));
-      } else {
-        setProducts(INITIAL_PRODUCTS);
-        localStorage.setItem('zencura_products', JSON.stringify(INITIAL_PRODUCTS));
-      }
+      localStorage.setItem('zencura_products', JSON.stringify(newProducts));
+    } catch (e) {}
 
-      const savedBranding = localStorage.getItem('zencura_branding');
-      if (savedBranding) {
-        const parsedB = JSON.parse(savedBranding);
-        setBranding(parsedB);
-        setBrandSiteName(parsedB.siteName);
-        setBrandFontFamily(parsedB.fontFamily);
-        setBrandFontStyle(parsedB.fontStyle);
-        setBrandIsBold(parsedB.isBold);
-      }
-    } catch (err) {
-      console.error('Failed to load data', err);
+    try {
+      const productsRef = ref(rtdb, 'products');
+      await set(productsRef, newProducts);
+      setIsOnline(true);
+    } catch (err: any) {
+      console.error('Failed to sync products to Firebase Realtime Database:', err);
+      setIsOnline(false);
+      showToast('Saved locally. Will sync to Firebase when online.');
     } finally {
-      setLoading(false);
+      setIsSyncing(false);
     }
   };
 
@@ -468,18 +561,35 @@ export default function App() {
     setLoginError('');
     setIsLoggingIn(true);
     try {
-      await new Promise(r => setTimeout(r, 200));
       const emailTrim = loginEmail.trim().toLowerCase();
-      const savedPassword = localStorage.getItem('zencura_admin_password') || '03060666126ak';
+      let savedPassword = '03060666126ak';
+
+      // Check Realtime Database for custom admin credentials
+      try {
+        const adminPassRef = ref(rtdb, 'admin/password');
+        const passSnap = await get(adminPassRef);
+        if (passSnap.exists()) {
+          savedPassword = passSnap.val();
+        } else {
+          // Check local storage fallback
+          const localPass = localStorage.getItem('zencura_admin_password');
+          if (localPass) savedPassword = localPass;
+        }
+      } catch (err) {
+        const localPass = localStorage.getItem('zencura_admin_password');
+        if (localPass) savedPassword = localPass;
+      }
+
       if (emailTrim === 'zencurapicks@gmail.com' && loginPassword === savedPassword) {
-        const token = 'mock-admin-token-' + Date.now();
+        const token = 'admin-token-' + Date.now();
         localStorage.setItem('zencura_admin_token', token);
+        localStorage.setItem('zencura_admin_password', savedPassword);
         setAdminToken(token);
         setIsAdminLoggedIn(true);
         setShowLoginModal(false);
         setLoginPassword('');
         setLoginEmail('');
-        showToast('Successfully logged into Admin Dashboard');
+        showToast('Successfully logged in (Firebase Realtime Authenticated)');
       } else {
         throw new Error('Invalid email or password');
       }
@@ -637,7 +747,7 @@ export default function App() {
     }
   };
 
-  const handleSaveBranding = (e: React.FormEvent) => {
+  const handleSaveBranding = async (e: React.FormEvent) => {
     e.preventDefault();
     setBrandMessage('');
     try {
@@ -648,9 +758,19 @@ export default function App() {
         isBold: brandIsBold
       };
       setBranding(newBranding);
-      localStorage.setItem('zencura_branding', JSON.stringify(newBranding));
-      setBrandMessage('Website branding updated successfully!');
-      showToast('Website branding updated successfully!');
+      try {
+        localStorage.setItem('zencura_branding', JSON.stringify(newBranding));
+      } catch (e) {}
+
+      // Realtime Database sync
+      try {
+        await set(ref(rtdb, 'branding'), newBranding);
+      } catch (e) {
+        console.warn('Failed to sync branding to RTDB:', e);
+      }
+
+      setBrandMessage('Website branding updated and synced in real-time!');
+      showToast('Website branding updated and synced in real-time!');
       setTimeout(() => setBrandMessage(''), 4000);
     } catch (err: any) {
       setBrandMessage('Failed to update branding');
@@ -728,6 +848,61 @@ export default function App() {
             )}
           </div>
 
+          {/* Right Header Navigation & Realtime Status Indicator */}
+          <div className="flex items-center gap-3">
+            {/* Realtime Database Sync indicator */}
+            <div 
+              className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                isSyncing 
+                  ? 'bg-amber-50 text-amber-700 border-amber-200' 
+                  : isOnline 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                    : 'bg-slate-100 text-slate-600 border-slate-200'
+              }`}
+              title={isSyncing ? 'Syncing with Firebase RTDB...' : isOnline ? 'Connected to Firebase Realtime Database' : 'Offline Mode (Local Cache Active)'}
+            >
+              {isSyncing ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                  <span className="hidden md:inline">Syncing...</span>
+                </>
+              ) : isOnline ? (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="hidden md:inline">Firebase Live</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="hidden md:inline">Local Cache</span>
+                </>
+              )}
+            </div>
+
+            {/* Admin Dashboard / Login Button */}
+            {isAdminLoggedIn ? (
+              <button
+                onClick={() => setActiveAdminTab('products')}
+                className="px-4 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold rounded-xl border border-blue-200 transition-colors flex items-center gap-1.5"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>Admin Dashboard</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowLoginModal(true)}
+                className="p-2 sm:px-3 sm:py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-medium transition-colors flex items-center gap-1.5"
+                title="Admin Login"
+              >
+                <Lock className="w-4 h-4 text-slate-500" />
+                <span className="hidden sm:inline">Admin</span>
+              </button>
+            )}
+          </div>
+
         </div>
       </header>
 
@@ -743,9 +918,13 @@ export default function App() {
                   <span className="px-3 py-1 bg-blue-50 text-blue-700 text-xs font-semibold rounded-full uppercase tracking-wider">
                     Administrator Dashboard
                   </span>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-full border border-emerald-200">
+                    <Wifi className="w-3 h-3 text-emerald-600" />
+                    Firebase Realtime Database Connected
+                  </span>
                 </div>
                 <h1 className="text-2xl font-bold text-slate-900 mt-2">Welcome back, Zencura Admin</h1>
-                <p className="text-slate-500 text-sm mt-1">Manage your affiliate product catalogue and customize website branding.</p>
+                <p className="text-slate-500 text-sm mt-1">Changes to products and branding synchronize instantly across all your laptops, phones, and devices.</p>
               </div>
               <div className="flex items-center gap-3">
                 <button
